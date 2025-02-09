@@ -1,112 +1,76 @@
-import { createWorkersAI } from "workers-ai-provider"
-import { streamText } from "ai"
-import { promptFormSchema } from "@/lib/validations"
-import { generateSystemPrompt, generateUserPrompt } from "@/lib/prompts"
-import type { AIPromptRequest, AIPromptResponse, CloudflareAIResponse } from "@/lib/types"
 import { NextResponse } from "next/server"
+import { promptFormSchema } from "@/lib/validations"
 
 export const runtime = "edge"
-export const maxDuration = 40 // Maximum runtime in seconds
 
 const API_TOKEN = process.env.CLOUDFLARE_API_TOKEN
 const ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID
-const MODEL = "@cf/meta/llama-2-7b-chat-int8"
 
 if (!API_TOKEN || !ACCOUNT_ID) {
-  throw new Error("Missing required environment variables")
+  throw new Error("Missing Cloudflare API credentials")
 }
 
-async function generateAIResponse(request: AIPromptRequest): Promise<CloudflareAIResponse> {
-  const workersai = createWorkersAI({ binding: process.env.AI })
+interface CloudflareAIResponse {
+  result: {
+    response: string
+  }
+  success: boolean
+  errors: any[]
+  messages: any[]
+}
 
-  const systemPrompt = generateSystemPrompt(request.category)
-  const userPrompt = generateUserPrompt(request)
-
-  const response = await workersai.generateText({
-    model: MODEL,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-    stream: true,
+async function run(model: string, input: any): Promise<CloudflareAIResponse> {
+  const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/ai/run/${model}`, {
+    headers: {
+      Authorization: `Bearer ${API_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+    body: JSON.stringify(input),
   })
 
-  return response
+  if (!response.ok) {
+    throw new Error(`Cloudflare AI API error: ${response.statusText}`)
+  }
+
+  const result = await response.json()
+  return result as CloudflareAIResponse
 }
 
 export async function POST(req: Request) {
   try {
-    // Input validation
     const body = await req.json()
     const result = promptFormSchema.safeParse(body)
 
     if (!result.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: "INVALID_INPUT",
-            message: "Invalid request parameters",
-            details: result.error.issues,
-          },
-        } as AIPromptResponse,
-        { status: 400 },
-      )
+      return NextResponse.json({ error: "Invalid request", details: result.error.issues }, { status: 400 })
     }
 
-    const request = result.data as AIPromptRequest
+    const { category, description, details, length } = result.data
 
-    // Rate limiting headers
-    const headers = new Headers({
-      "X-RateLimit-Limit": "10",
-      "X-RateLimit-Remaining": "9", // You would normally calculate this
-      "Cache-Control": "no-store, private",
+    const systemPrompt = `You are a professional prompt generator for ${category}. 
+    Create ${length} prompts that are well-structured and detailed.`
+
+    const userPrompt = `Generate a ${length} ${category} prompt about: ${description}.
+    ${details ? `Additional details: ${details}` : ""}
+    If this is a code prompt, include best practices and common pitfalls.
+    If this is an image prompt, include specific style details and composition guidelines.`
+
+    const aiResponse = await run("@cf/meta/llama-2-7b-chat-int8", {
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
     })
 
-    try {
-      const response = await generateAIResponse(request)
-
-      // Stream the response
-      const stream = streamText(response)
-
-      return new Response(stream, {
-        headers: {
-          ...Object.fromEntries(headers.entries()),
-          "Content-Type": "text/event-stream",
-          Connection: "keep-alive",
-          "Cache-Control": "no-cache",
-        },
-      })
-    } catch (error) {
-      console.error("AI Generation Error:", error)
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: "AI_GENERATION_ERROR",
-            message: "Failed to generate AI response",
-            details: error instanceof Error ? error.message : "Unknown error occurred",
-          },
-        } as AIPromptResponse,
-        {
-          status: 500,
-          headers,
-        },
-      )
+    if (aiResponse.success && aiResponse.result && aiResponse.result.response) {
+      return NextResponse.json({ generatedPrompt: aiResponse.result.response })
+    } else {
+      throw new Error("Unexpected AI response format")
     }
   } catch (error) {
-    console.error("Request Processing Error:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: {
-          code: "SERVER_ERROR",
-          message: "Internal server error",
-          details: error instanceof Error ? error.message : "Unknown error occurred",
-        },
-      } as AIPromptResponse,
-      { status: 500 },
-    )
+    console.error("Generation error:", error)
+    return NextResponse.json({ error: "Failed to generate prompt" }, { status: 500 })
   }
 }
 
