@@ -1,15 +1,15 @@
 import { createWorkersAI } from "workers-ai-provider"
-import { StreamingTextResponse } from "ai/streaming"
+import { streamText } from "ai"
 import { promptFormSchema } from "@/lib/validations"
 import { NextResponse } from "next/server"
 
-const workersai = createWorkersAI({
-  binding: process.env.AI,
-})
+type Env = {
+  AI: any // Replace 'any' with the correct type if available
+}
 
 export const runtime = "edge"
 
-export async function POST(req: Request) {
+export async function POST(req: Request, { env }: { env: Env }) {
   try {
     const body = await req.json()
     const result = promptFormSchema.safeParse(body)
@@ -20,6 +20,8 @@ export async function POST(req: Request) {
 
     const { category, description, details, length } = result.data
 
+    const workersai = createWorkersAI({ binding: env.AI })
+
     const prompt = `
       Generate a ${length} length ${category} prompt about: ${description}.
       ${details ? `Additional details: ${details}` : ""}
@@ -29,13 +31,18 @@ export async function POST(req: Request) {
       If this is an image prompt, include specific style details and composition guidelines.
     `.trim()
 
-    const response = await workersai.generateText({
-      model: "@cf/meta/llama-2-7b-chat-int8",
+    const response = streamText({
+      model: workersai("@cf/meta/llama-2-7b-chat-int8"),
       prompt,
-      stream: true,
     })
 
-    return new StreamingTextResponse(response)
+    return response.toTextStreamResponse({
+      headers: {
+        "Content-Type": "text/x-unknown",
+        "content-encoding": "identity",
+        "transfer-encoding": "chunked",
+      },
+    })
   } catch (error) {
     console.error("Generation error:", error)
     return new Response("Internal Server Error", { status: 500 })
