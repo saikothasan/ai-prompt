@@ -43,20 +43,12 @@ export function PromptGenerator() {
         throw new Error(response.statusText)
       }
 
-      const reader = response.body?.getReader()
-      const decoder = new TextDecoder()
-      let result = ""
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-
-          const chunk = decoder.decode(value)
-          result += chunk
-          setGeneratedText(result)
-        }
+      const result = await response.json()
+      if (result.error) {
+        throw new Error(result.error)
       }
+
+      setGeneratedText(result.generatedPrompt)
     } catch (error) {
       toast({
         title: "Error",
