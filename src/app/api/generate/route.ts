@@ -1,5 +1,5 @@
 import { createWorkersAI } from "workers-ai-provider"
-import { streamText } from "ai"
+import { StreamingTextResponse } from "ai"
 import { promptFormSchema } from "@/lib/validations"
 import { NextResponse } from "next/server"
 
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
       stream: true,
     })
 
-    return streamText(response)
+    return new StreamingTextResponse(response)
   } catch (error) {
     console.error("Generation error:", error)
     return new Response("Internal Server Error", { status: 500 })
