@@ -1,5 +1,5 @@
 import { createWorkersAI } from "workers-ai-provider"
-import { StreamingTextResponse } from "ai"
+import { StreamingTextResponse } from "ai/streaming"
 import { promptFormSchema } from "@/lib/validations"
 import { NextResponse } from "next/server"
 
