@@ -10,7 +10,16 @@ if (!API_TOKEN || !ACCOUNT_ID) {
   throw new Error("Missing Cloudflare API credentials")
 }
 
-async function run(model: string, input: any) {
+interface CloudflareAIResponse {
+  result: {
+    response: string
+  }
+  success: boolean
+  errors: any[]
+  messages: any[]
+}
+
+async function run(model: string, input: any): Promise<CloudflareAIResponse> {
   const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/ai/run/${model}`, {
     headers: {
       Authorization: `Bearer ${API_TOKEN}`,
@@ -25,7 +34,7 @@ async function run(model: string, input: any) {
   }
 
   const result = await response.json()
-  return result
+  return result as CloudflareAIResponse
 }
 
 export async function POST(req: Request) {
@@ -54,8 +63,7 @@ export async function POST(req: Request) {
       ],
     })
 
-    // Assuming the AI response has a 'result' field with the generated text
-    if (aiResponse.result && aiResponse.result.response) {
+    if (aiResponse.success && aiResponse.result && aiResponse.result.response) {
       return NextResponse.json({ generatedPrompt: aiResponse.result.response })
     } else {
       throw new Error("Unexpected AI response format")
