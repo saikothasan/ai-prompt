@@ -9,9 +9,14 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { useToast } from "@/hooks/use-toast"
+import { useToast } from "@/components/ui/use-toast"
 import { promptFormSchema, type PromptFormData } from "@/lib/validations"
 import Link from "next/link"
+
+interface GenerateResponse {
+  generatedPrompt?: string
+  error?: string
+}
 
 export function PromptGenerator() {
   const { toast } = useToast()
@@ -43,16 +48,21 @@ export function PromptGenerator() {
         throw new Error(response.statusText)
       }
 
-      const result = await response.json()
+      const result = (await response.json()) as GenerateResponse
+
       if (result.error) {
         throw new Error(result.error)
       }
 
-      setGeneratedText(result.generatedPrompt)
+      if (result.generatedPrompt) {
+        setGeneratedText(result.generatedPrompt)
+      } else {
+        throw new Error("No prompt generated")
+      }
     } catch (error) {
       toast({
         title: "Error",
-        description: "Failed to generate prompt. Please try again.",
+        description: error instanceof Error ? error.message : "Failed to generate prompt. Please try again.",
         variant: "destructive",
       })
     } finally {
