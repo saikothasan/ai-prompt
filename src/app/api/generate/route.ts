@@ -1,15 +1,34 @@
-import { createWorkersAI } from "workers-ai-provider"
-import { streamText } from "ai"
-import { promptFormSchema } from "@/lib/validations"
 import { NextResponse } from "next/server"
-
-type Env = {
-  AI: any // Replace 'any' with the correct type if available
-}
+import { promptFormSchema } from "@/lib/validations"
 
 export const runtime = "edge"
 
-export async function POST(req: Request, { env }: { env: Env }) {
+const API_TOKEN = process.env.CLOUDFLARE_API_TOKEN
+const ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID
+
+if (!API_TOKEN || !ACCOUNT_ID) {
+  throw new Error("Missing Cloudflare API credentials")
+}
+
+async function run(model: string, input: any) {
+  const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/ai/run/${model}`, {
+    headers: {
+      Authorization: `Bearer ${API_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Cloudflare AI API error: ${response.statusText}`)
+  }
+
+  const result = await response.json()
+  return result
+}
+
+export async function POST(req: Request) {
   try {
     const body = await req.json()
     const result = promptFormSchema.safeParse(body)
@@ -20,32 +39,30 @@ export async function POST(req: Request, { env }: { env: Env }) {
 
     const { category, description, details, length } = result.data
 
-    const workersai = createWorkersAI({ binding: env.AI })
+    const systemPrompt = `You are a professional prompt generator for ${category}. 
+    Create ${length} prompts that are well-structured and detailed.`
 
-    const prompt = `
-      Generate a ${length} length ${category} prompt about: ${description}.
-      ${details ? `Additional details: ${details}` : ""}
-      
-      The response should be well-structured and professional.
-      If this is a code prompt, include best practices and common pitfalls.
-      If this is an image prompt, include specific style details and composition guidelines.
-    `.trim()
+    const userPrompt = `Generate a ${length} ${category} prompt about: ${description}.
+    ${details ? `Additional details: ${details}` : ""}
+    If this is a code prompt, include best practices and common pitfalls.
+    If this is an image prompt, include specific style details and composition guidelines.`
 
-    const response = streamText({
-      model: workersai("@cf/meta/llama-2-7b-chat-int8"),
-      prompt,
+    const aiResponse = await run("@cf/meta/llama-2-7b-chat-int8", {
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
     })
 
-    return response.toTextStreamResponse({
-      headers: {
-        "Content-Type": "text/x-unknown",
-        "content-encoding": "identity",
-        "transfer-encoding": "chunked",
-      },
-    })
+    // Assuming the AI response has a 'result' field with the generated text
+    if (aiResponse.result && aiResponse.result.response) {
+      return NextResponse.json({ generatedPrompt: aiResponse.result.response })
+    } else {
+      throw new Error("Unexpected AI response format")
+    }
   } catch (error) {
     console.error("Generation error:", error)
-    return new Response("Internal Server Error", { status: 500 })
+    return NextResponse.json({ error: "Failed to generate prompt" }, { status: 500 })
   }
 }
 
